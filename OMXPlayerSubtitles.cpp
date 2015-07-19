@@ -34,14 +34,14 @@ using namespace std;
 using namespace boost;
 
 OMXPlayerSubtitles::OMXPlayerSubtitles() BOOST_NOEXCEPT
-: m_paused(),
-  m_visible(),
+: m_visible(),
   m_use_external_subtitles(),
   m_active_index(),
   m_delay(),
   m_thread_stopped(),
   m_font_size(),
   m_centered(),
+  m_ghost_box(),
   m_lines(),
   m_av_clock(),
 #ifndef NDEBUG
@@ -57,17 +57,19 @@ OMXPlayerSubtitles::~OMXPlayerSubtitles() BOOST_NOEXCEPT
 bool OMXPlayerSubtitles::Open(size_t stream_count,
                               vector<Subtitle>&& external_subtitles,
                               const string& font_path,
+                              const string& italic_font_path,
                               float font_size,
                               bool centered,
+                              bool ghost_box,
                               unsigned int lines,
+                              int display, int layer,
                               OMXClock* clock) BOOST_NOEXCEPT
 {
   assert(!m_open);
 
   m_subtitle_buffers.resize(stream_count, circular_buffer<Subtitle>(32));
-  m_external_subtitles = move(external_subtitles);
+  m_external_subtitles = std::move(external_subtitles);
   
-  m_paused = false;
   m_visible = true;
   m_use_external_subtitles = true;
   m_active_index = 0;
@@ -75,15 +77,19 @@ bool OMXPlayerSubtitles::Open(size_t stream_count,
   m_thread_stopped.store(false, memory_order_relaxed);
 
   m_font_path = font_path;
+  m_italic_font_path = italic_font_path;
   m_font_size = font_size;
   m_centered = centered;
+  m_ghost_box = ghost_box;
   m_lines = lines;
   m_av_clock = clock;
+  m_display = display;
+  m_layer = layer;
 
   if(!Create())
     return false;
 
-  m_mailbox.send(Message::Flush{m_external_subtitles});
+  SendToRenderer(Message::Flush{m_external_subtitles});
 
 #ifndef NDEBUG
   m_open = true;
@@ -96,7 +102,7 @@ void OMXPlayerSubtitles::Close() BOOST_NOEXCEPT
 {
   if(Running())
   {
-    m_mailbox.send(Message::Stop{});
+    SendToRenderer(Message::Stop{});
     StopThread();
   }
 
@@ -112,7 +118,8 @@ void OMXPlayerSubtitles::Process()
 {
   try
   {
-    RenderLoop(m_font_path, m_font_size, m_centered, m_lines, m_av_clock);
+    RenderLoop(m_font_path, m_italic_font_path, m_font_size, m_centered,
+               m_ghost_box, m_lines, m_av_clock);
   }
   catch(Enforce_error& e)
   {
@@ -132,40 +139,40 @@ void OMXPlayerSubtitles::Process()
 template <typename Iterator>
 Iterator FindSubtitle(Iterator begin, Iterator end, int time)
 {
-  auto first = upper_bound(begin, end, time,
-                           [](int a, const Subtitle& b)
-                           {
-                             return a < b.start;
-                           });
-  if(first != begin)
-    --first;
-  return first;
+  return upper_bound(begin, end, time,
+    [](int a, const Subtitle& b) { return a < b.stop; });
 }
 
 void OMXPlayerSubtitles::
 RenderLoop(const string& font_path,
+           const string& italic_font_path,
            float font_size,
            bool centered,
+           bool ghost_box,
            unsigned int lines,
            OMXClock* clock)
 {
-  SubtitleRenderer renderer(1,
+  SubtitleRenderer renderer(m_display, m_layer,
                             font_path,
+                            italic_font_path,
                             font_size,
                             0.01f, 0.06f,
                             centered,
                             0xDD,
-                            0x80,
+                            ghost_box ? 0x80 : 0,
                             lines);
 
   vector<Subtitle> subtitles;
 
+  int prev_now{};
   size_t next_index{};
   bool exit{};
   bool paused{};
   bool have_next{};
   int current_stop = INT_MIN;
   bool showing{};
+  bool osd{};
+  chrono::time_point<std::chrono::steady_clock> osd_stop;
   int delay{};
 
   auto GetCurrentTime = [&]
@@ -181,32 +188,37 @@ RenderLoop(const string& font_path,
       {
         renderer.prepare(subtitles[next_index].text_lines);
         have_next = true;
-        return;
+        break;
       }
     }
-    have_next = false;
   };
 
   auto Reset = [&](int time)
   {
     renderer.unprepare();
     current_stop = INT_MIN;
+
     auto it = FindSubtitle(subtitles.begin(),
                            subtitles.end(),
                            time);
     next_index = it - subtitles.begin();
-    TryPrepare(time);
+
+    if(next_index != subtitles.size())
+    {
+      renderer.prepare(subtitles[next_index].text_lines);
+      have_next = true;
+    }
+    else
+    {
+      have_next = false;
+    }
   };
 
   for(;;)
   {
-    int timeout;
+    int timeout = INT_MAX;
 
-    if(paused)
-    {
-      timeout = INT_MAX;
-    }
-    else
+    if(!paused)
     {
       auto now = GetCurrentTime();
 
@@ -218,23 +230,28 @@ RenderLoop(const string& font_path,
         have_next ? subtitles[next_index].start - now
                   : INT_MAX;
 
-      timeout = clamp(min(till_stop, till_next_start),
-                      0, 1000);
+      timeout = min(min(till_stop, till_next_start), 1000);
+    }
+
+    if(osd)
+    {
+      procrustes(timeout,
+        chrono::duration_cast<std::chrono::milliseconds>(
+          osd_stop - chrono::steady_clock::now()).count());
     }
 
     m_mailbox.receive_wait(chrono::milliseconds(timeout),
       [&](Message::Push&& args)
       {
-        subtitles.push_back(move(args.subtitle));
+        subtitles.push_back(std::move(args.subtitle));
       },
       [&](Message::Flush&& args)
       {
-        subtitles = move(args.subtitles);
-        Reset(GetCurrentTime());
+        subtitles = std::move(args.subtitles);
+        prev_now = INT_MAX;
       },
-      [&](Message::Seek&& args)
+      [&](Message::Touch&&)
       {
-        Reset(args.time - delay);
       },
       [&](Message::SetPaused&& args)
       {
@@ -243,29 +260,42 @@ RenderLoop(const string& font_path,
       [&](Message::SetDelay&& args)
       {
         delay = args.value;
-        Reset(GetCurrentTime());
+        prev_now = INT_MAX;
       },
       [&](Message::Stop&&)
       {
         exit = true;
+      },
+      [&](Message::DisplayText&& args)
+      {
+        renderer.prepare(args.text_lines);
+        renderer.show_next();
+        showing = true;
+        osd = true;
+        osd_stop = chrono::steady_clock::now() +
+                   chrono::milliseconds(args.duration);
+        prev_now = INT_MAX;
       });
 
     if(exit) break;
 
-    if(paused) continue;
-
     auto now = GetCurrentTime();
 
-    if(have_next && subtitles[next_index].stop <= now)
+    if(now < prev_now || (have_next && subtitles[next_index].stop <= now))
     {
-      // printf("Subtitle %i had to be unprepared\n", next_index);
-      renderer.unprepare();
-
-      ++next_index;
-      have_next = false;
+      Reset(now);
+    }
+    else if(!have_next)
+    {
+      TryPrepare(now);
     }
 
-    if(current_stop <= now)
+    prev_now = now;
+
+    if(osd && chrono::steady_clock::now() >= osd_stop)
+      osd = false;
+
+    if(!osd && current_stop <= now)
     {
       if(have_next && subtitles[next_index].start <= now)
       {
@@ -276,6 +306,7 @@ RenderLoop(const string& font_path,
 
         ++next_index;
         have_next = false;
+        TryPrepare(now);
       }
       else if(showing)
       {
@@ -284,9 +315,6 @@ RenderLoop(const string& font_path,
         showing = false;
       }
     }
-
-    if(!have_next)
-      TryPrepare(now);
   }
 }
 
@@ -296,7 +324,7 @@ void OMXPlayerSubtitles::FlushRenderer()
 
   if(GetUseExternalSubtitles())
   {
-    m_mailbox.send(Message::Flush{m_external_subtitles});
+    SendToRenderer(Message::Flush{m_external_subtitles});
   }
   else
   {
@@ -304,11 +332,11 @@ void OMXPlayerSubtitles::FlushRenderer()
     assert(!m_subtitle_buffers.empty());
     for(auto& s : m_subtitle_buffers[m_active_index])
       flush.subtitles.push_back(s);
-    m_mailbox.send(move(flush));
+    SendToRenderer(std::move(flush));
   }
 }
 
-void OMXPlayerSubtitles::Flush(double pts) BOOST_NOEXCEPT
+void OMXPlayerSubtitles::Flush() BOOST_NOEXCEPT
 {
   assert(m_open);
 
@@ -318,26 +346,22 @@ void OMXPlayerSubtitles::Flush(double pts) BOOST_NOEXCEPT
   if(GetVisible())
   {
     if(GetUseExternalSubtitles())
-      m_mailbox.send(Message::Seek{static_cast<int>(pts/1000)});
+      SendToRenderer(Message::Touch{});
     else
-      m_mailbox.send(Message::Flush{});
+      SendToRenderer(Message::Flush{});
   }
 }
 
 void OMXPlayerSubtitles::Resume() BOOST_NOEXCEPT
 {
   assert(m_open);
-
-  m_paused = false;
-  m_mailbox.send(Message::SetPaused{false});
+  SendToRenderer(Message::SetPaused{false});
 }
 
 void OMXPlayerSubtitles::Pause() BOOST_NOEXCEPT
 {
   assert(m_open);
-
-  m_paused = true;
-  m_mailbox.send(Message::SetPaused{true});
+  SendToRenderer(Message::SetPaused{true});
 }
 
 void OMXPlayerSubtitles::SetUseExternalSubtitles(bool use) BOOST_NOEXCEPT
@@ -355,7 +379,7 @@ void OMXPlayerSubtitles::SetDelay(int value) BOOST_NOEXCEPT
   assert(m_open);
 
   m_delay = value;
-  m_mailbox.send(Message::SetDelay{value});
+  SendToRenderer(Message::SetDelay{value});
 }
 
 void OMXPlayerSubtitles::SetVisible(bool visible) BOOST_NOEXCEPT
@@ -375,7 +399,7 @@ void OMXPlayerSubtitles::SetVisible(bool visible) BOOST_NOEXCEPT
     if(m_visible)
     {
       m_visible = false;
-      m_mailbox.send(Message::Flush{});
+      SendToRenderer(Message::Flush{});
     }
   }
 }
@@ -429,13 +453,6 @@ bool OMXPlayerSubtitles::AddPacket(OMXPacket *pkt, size_t stream_index) BOOST_NO
     OMXReader::FreePacket(pkt);
   };
 
-  if(m_thread_stopped.load(memory_order_relaxed))
-  {
-    // Rendering thread has stopped, throw away the packet
-    CLog::Log(LOGWARNING, "Subtitle rendering thread has stopped, discarding packet");
-    return true;
-  }
-
   if(pkt->hints.codec != AV_CODEC_ID_SUBRIP && 
      pkt->hints.codec != AV_CODEC_ID_SSA)
   {
@@ -447,9 +464,9 @@ bool OMXPlayerSubtitles::AddPacket(OMXPacket *pkt, size_t stream_index) BOOST_NO
   auto text_lines = GetTextLines(pkt);
 
   if (!m_subtitle_buffers[stream_index].empty() &&
-    start < m_subtitle_buffers[stream_index].back().start)
+    stop < m_subtitle_buffers[stream_index].back().stop)
   {
-    start = m_subtitle_buffers[stream_index].back().start;
+    stop = m_subtitle_buffers[stream_index].back().stop;
   }
 
   m_subtitle_buffers[stream_index].push_back(
@@ -460,8 +477,17 @@ bool OMXPlayerSubtitles::AddPacket(OMXPacket *pkt, size_t stream_index) BOOST_NO
      GetVisible() &&
      stream_index == GetActiveStream())
   {
-    m_mailbox.send(Message::Push{{start, stop, move(text_lines)}});
+    SendToRenderer(Message::Push{{start, stop, std::move(text_lines)}});
   }
 
   return true;
+}
+
+void OMXPlayerSubtitles::DisplayText(const std::string& text, int duration) BOOST_NOEXCEPT
+{
+  assert(m_open);
+
+  vector<string> text_lines;
+  split(text_lines, text, is_any_of("\n"));
+  SendToRenderer(Message::DisplayText{std::move(text_lines), duration});
 }
