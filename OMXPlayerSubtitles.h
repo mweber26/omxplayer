@@ -30,7 +30,6 @@
 #include <atomic>
 #include <string>
 #include <vector>
-#include <utility>
 
 class OMXPlayerSubtitles : public OMXThread
 {
@@ -42,15 +41,12 @@ public:
   bool Open(size_t stream_count,
             std::vector<Subtitle>&& external_subtitles,
             const std::string& font_path,
-            const std::string& italic_font_path,
             float font_size,
             bool centered,
-            bool ghost_box,
             unsigned int lines,
-            int display, int layer,
             OMXClock* clock) BOOST_NOEXCEPT;
   void Close() BOOST_NOEXCEPT;
-  void Flush() BOOST_NOEXCEPT;
+  void Flush(double pts) BOOST_NOEXCEPT;
   void Resume() BOOST_NOEXCEPT;
   void Pause() BOOST_NOEXCEPT;
 
@@ -87,8 +83,6 @@ public:
     return m_use_external_subtitles;
   }
 
-  void DisplayText(const std::string& text, int duration) BOOST_NOEXCEPT;
-
   bool AddPacket(OMXPacket *pkt, size_t stream_index) BOOST_NOEXCEPT;
 
 private:
@@ -102,7 +96,10 @@ private:
     {
       Subtitle subtitle;
     };
-    struct Touch {};
+    struct Seek
+    {
+      int time;
+    };
     struct SetDelay
     {
       int value;
@@ -111,30 +108,12 @@ private:
     {
       bool value;
     };
-    struct DisplayText
-    {
-      std::vector<std::string> text_lines;
-      int duration;
-    };
   };
-
-  template <typename T>
-  void SendToRenderer(T&& msg)
-  {
-    if(m_thread_stopped.load(std::memory_order_relaxed))
-    {
-      CLog::Log(LOGERROR, "Subtitle rendering thread not running, message discarded");
-      return;
-    }
-    m_mailbox.send(std::forward<T>(msg));
-  }
 
   void Process();
   void RenderLoop(const std::string& font_path,
-                  const std::string& italic_font_path,
                   float font_size,
                   bool centered,
-                  bool ghost_box,
                   unsigned int lines,
                   OMXClock* clock);
   std::vector<std::string> GetTextLines(OMXPacket *pkt);
@@ -146,24 +125,20 @@ private:
   Mailbox<Message::Stop,
           Message::Flush,
           Message::Push,
-          Message::Touch,
+          Message::Seek,
           Message::SetPaused,
-          Message::SetDelay,
-          Message::DisplayText>                 m_mailbox;
+          Message::SetDelay>                    m_mailbox;
+  bool                                          m_paused;
   bool                                          m_visible;
   bool                                          m_use_external_subtitles;
   size_t                                        m_active_index;
   int                                           m_delay;
   std::atomic<bool>                             m_thread_stopped;
   std::string                                   m_font_path;
-  std::string                                   m_italic_font_path;
   float                                         m_font_size;
   bool                                          m_centered;
-  bool                                          m_ghost_box;
   unsigned int                                  m_lines;
   OMXClock*                                     m_av_clock;
-  int                                           m_display;
-  int                                           m_layer;
 
 #ifndef NDEBUG
   bool m_open;
