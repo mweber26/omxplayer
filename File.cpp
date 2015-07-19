@@ -40,7 +40,6 @@ CFile::CFile()
 {
   m_pFile = NULL;
   m_flags = 0;
-  m_iLength = 0;
   m_bPipe = false;
 }
 
@@ -55,21 +54,17 @@ CFile::~CFile()
 bool CFile::Open(const CStdString& strFileName, unsigned int flags)
 {
   m_flags = flags;
+  m_fileName = strFileName;
 
   if (strFileName.compare(0, 5, "pipe:") == 0)
   {
     m_bPipe = true;
     m_pFile = stdin;
-    m_iLength = 0;
     return true;
   }
   m_pFile = fopen64(strFileName.c_str(), "r");
   if(!m_pFile)
     return false;
-
-  fseeko64(m_pFile, 0, SEEK_END);
-  m_iLength = ftello64(m_pFile);
-  fseeko64(m_pFile, 0, SEEK_SET);
 
   return true;
 }
@@ -98,12 +93,28 @@ bool CFile::Exists(const CStdString& strFileName, bool bUseCache /* = true */)
 
 unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
 {
+  unsigned int i;
   unsigned int ret = 0;
+  int64_t offset = 0;
 
   if(!m_pFile)
     return 0;
 
-  ret = fread(lpBuf, 1, uiBufSize, m_pFile);
+  //get where the fread should always start
+  offset = ftello64(m_pFile);
+
+  for(i = 0; i < 100; i++)
+  {
+    ret = fread(lpBuf, 1, uiBufSize, m_pFile);
+    //if we don't get what they want, try to reopen the file and try again
+    if(ret < uiBufSize)
+    {
+      usleep(100000); //100ms
+      fclose(m_pFile);
+      m_pFile = fopen64(m_fileName.c_str(), "r");
+      fseeko64(m_pFile, offset, SEEK_SET);
+    }
+  }
 
   return ret;
 }
@@ -128,7 +139,23 @@ int64_t CFile::Seek(int64_t iFilePosition, int iWhence)
 //*********************************************************************************************
 int64_t CFile::GetLength()
 {
-  return m_iLength;
+  int64_t ret;
+
+  //get the current offset
+  int64_t offset = ftell(m_pFile);
+
+  //close and reopen the file
+  fclose(m_pFile);
+  m_pFile = fopen64(m_fileName.c_str(), "r");
+
+  //go to end and get the length
+  fseeko64(m_pFile, 0, SEEK_END);
+  ret = ftello64(m_pFile);
+
+  //move back to the original offset
+  fseeko64(m_pFile, offset, SEEK_SET);
+
+  return ret;
 }
 
 //*********************************************************************************************
