@@ -751,8 +751,8 @@ int COMXVideo::Decode(uint8_t *pData, int iSize, double dts, double pts)
       }
       else if (pts == DVD_NOPTS_VALUE && dts == DVD_NOPTS_VALUE)
         omx_buffer->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
-      else if (pts == DVD_NOPTS_VALUE)
-        omx_buffer->nFlags |= OMX_BUFFERFLAG_TIME_IS_DTS;
+      //else if (pts == DVD_NOPTS_VALUE)
+        //omx_buffer->nFlags |= OMX_BUFFERFLAG_TIME_IS_DTS;
 
       omx_buffer->nFilledLen = std::min((OMX_U32)demuxer_bytes, omx_buffer->nAllocLen);
       memcpy(omx_buffer->pBuffer, demuxer_content, omx_buffer->nFilledLen);
