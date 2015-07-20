@@ -23,7 +23,6 @@ configure:
 	LDFLAGS="" \
   ./configure \
 			--extra-cflags="-mfpu=vfp -mfloat-abi=$(FLOAT) -mno-apcs-stack-check -mstructure-size-boundary=32 -mno-sched-prolog" \
-			--enable-cross-compile \
 			--enable-shared \
 			--disable-static \
 			--arch=arm \
@@ -245,7 +244,6 @@ configure:
 			--disable-decoder=idf \
 			--disable-decoder=hevc \
 			--enable-decoder=opus \
-			--cross-prefix=$(HOST)-
 
 .PHONY : clean
 clean:
