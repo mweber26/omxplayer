@@ -264,7 +264,17 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
   if (live)
     m_pFormatContext->flags |= AVFMT_FLAG_NOBUFFER;
 
-  result = m_dllAvFormat.avformat_find_stream_info(m_pFormatContext, NULL);
+int i;
+printf("finding initial stream info\n");
+  for(i = 0; i < 100; i++)
+  {
+    result = m_dllAvFormat.avformat_find_stream_info(m_pFormatContext, NULL);
+	 if(result >= 0)
+	   break;
+	else
+	 	usleep(100 * 1000);
+ }
+ printf("got stream info after %d tries\n", i);
   if(result < 0)
   {
     Close();
@@ -1141,6 +1151,14 @@ int OMXReader::GetStreamLength()
 {
   if (!m_pFormatContext)
     return 0;
+
+  int prev_duration =  (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
+
+printf("Before GetStreamLength\n");
+m_dllAvFormat.avformat_find_stream_info(m_pFormatContext, NULL);
+
+  printf("GetStreamLength prev=%d, current=%d\n", prev_duration,
+  	 (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000)));
 
   return (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
 }

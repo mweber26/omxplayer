@@ -1394,6 +1394,10 @@ int main(int argc, char *argv[])
 
           auto t = (unsigned) (m_av_clock->OMXMediaTime()*1e-6);
           auto dur = m_omx_reader.GetStreamLength() / 1000;
+
+			 printf("PAUSING %02d:%02d:%02d / %02d:%02d:%02d\n",
+            (t/3600), (t/60)%60, t%60, (dur/3600), (dur/60)%60, dur%60);
+
           DISPLAY_TEXT_LONG(strprintf("Pause\n%02d:%02d:%02d / %02d:%02d:%02d",
             (t/3600), (t/60)%60, t%60, (dur/3600), (dur/60)%60, dur%60));
         }
@@ -1404,6 +1408,10 @@ int main(int argc, char *argv[])
 
           auto t = (unsigned) (m_av_clock->OMXMediaTime()*1e-6);
           auto dur = m_omx_reader.GetStreamLength() / 1000;
+
+			 printf("PLAYING %02d:%02d:%02d / %02d:%02d:%02d\n",
+            (t/3600), (t/60)%60, t%60, (dur/3600), (dur/60)%60, dur%60);
+
           DISPLAY_TEXT_SHORT(strprintf("Play\n%02d:%02d:%02d / %02d:%02d:%02d",
             (t/3600), (t/60)%60, t%60, (dur/3600), (dur/60)%60, dur%60));
         }
