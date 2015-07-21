@@ -1142,13 +1142,16 @@ int OMXReader::GetStreamLength()
   if (!m_pFormatContext)
     return 0;
 
+printf("GetStreamLength\n");
   int prev_duration = (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
 
-  AVFormatContext *formatcontext = NULL;
+  AVFormatContext *format_context = NULL;
   AVIOContext *iocontext = NULL;
   CFile *file = NULL;
   AVInputFormat *iformat = NULL;
   unsigned char *buffer = NULL;
+  const AVIOInterruptCB int_cb = { interrupt_cb, NULL };
+  int result;
 
   unsigned int flags = READ_TRUNCATED | READ_BITRATE | READ_CHUNKED;
   format_context = m_dllAvFormat.avformat_alloc_context();
@@ -1179,8 +1182,8 @@ int OMXReader::GetStreamLength()
     return prev_duration;
   }
 
-  m_pFormatContext->pb = iocontext;
-  result = m_dllAvFormat.avformat_open_input(&m_pFormatContext, m_filename.c_str(), iformat, NULL);
+  format_context->pb = iocontext;
+  result = m_dllAvFormat.avformat_open_input(&format_context, m_filename.c_str(), iformat, NULL);
   if(result < 0)
   {
     if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
@@ -1189,7 +1192,7 @@ int OMXReader::GetStreamLength()
     return prev_duration;
   }
 
-  result = m_dllAvFormat.avformat_find_stream_info(m_pFormatContext, NULL);
+  result = m_dllAvFormat.avformat_find_stream_info(format_context, NULL);
   if(result < 0)
   {
     if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
@@ -1197,13 +1200,15 @@ int OMXReader::GetStreamLength()
     if(file) { file->Close(); delete file; }
     return prev_duration;
   }
+
+  int current_duration = format_context->duration;
 
   if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
   if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
   if(file) { file->Close(); delete file; }
 
-  printf("GetStreamLength prev=%d, current=%d\n", prev_duration, (int)(formatcontext->duration / (AV_TIME_BASE / 1000)));
-  return (int)(formatcontext->duration / (AV_TIME_BASE / 1000));
+  printf("GetStreamLength prev=%d, current=%d\n", prev_duration, (int)(current_duration / (AV_TIME_BASE / 1000)));
+  return (int)(current_duration / (AV_TIME_BASE / 1000));
 }
 
 double OMXReader::NormalizeFrameduration(double frameduration)

@@ -103,7 +103,7 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
   //get where the fread should always start
   offset = ftello64(m_pFile);
 
-	   printf("Read current = %lld, file = %s\n", offset, m_fileName.c_str());
+	   //printf("Read current = %lld, file = %s\n", offset, m_fileName.c_str());
   for(i = 0; i < 100; i++)
   {
     ret = fread(lpBuf, 1, uiBufSize, m_pFile);
