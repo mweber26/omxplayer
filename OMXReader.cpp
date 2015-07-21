@@ -1139,76 +1139,48 @@ void OMXReader::SetSpeed(int iSpeed)
 
 int OMXReader::GetStreamLength()
 {
+  FILE *fp;
+  char cmd[1024];
+  char duration[128];
+  char *part;
+  int64_t hour, min, sec, hund;
+
   if (!m_pFormatContext)
     return 0;
 
-printf("GetStreamLength\n");
-  int prev_duration = (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
+  //gets 00:10:53.68,
+  sprintf(cmd, "avconv -i '%s' 2>&1 | grep Duration | awk '{ print $2 }'", 
+    m_filename.c_str());
 
-  AVFormatContext *format_context = NULL;
-  AVIOContext *iocontext = NULL;
-  CFile *file = NULL;
-  AVInputFormat *iformat = NULL;
-  unsigned char *buffer = NULL;
-  const AVIOInterruptCB int_cb = { interrupt_cb, NULL };
-  int result;
-
-  unsigned int flags = READ_TRUNCATED | READ_BITRATE | READ_CHUNKED;
-  format_context = m_dllAvFormat.avformat_alloc_context();
-  format_context->interrupt_callback = int_cb;
-  format_context->flags |= AVFMT_FLAG_NONBLOCK;
-
-  file = new CFile();
-  if(!file->Open(m_filename, flags))
+  fp = popen(cmd, "r");
+  if(fp == NULL)
   {
-    if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
-    if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
-    if(file) { file->Close(); delete file; }
-    return prev_duration;
+    printf("Failed to run command\n");
+	 //if command fails then return the duration we got from the original file processing
+	 return (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
   }
 
-  buffer = (unsigned char*)m_dllAvUtil.av_malloc(FFMPEG_FILE_BUFFER_SIZE);
-  iocontext = m_dllAvFormat.avio_alloc_context(buffer, FFMPEG_FILE_BUFFER_SIZE, 0, file, dvd_file_read, NULL, dvd_file_seek);
-  iocontext->max_packet_size = 6144;
-  if(iocontext->max_packet_size)
-    iocontext->max_packet_size *= FFMPEG_FILE_BUFFER_SIZE / iocontext->max_packet_size;
+  fgets(duration, sizeof(duration)-1, fp);
+  pclose(fp);
 
-  m_dllAvFormat.av_probe_input_buffer(iocontext, &iformat, m_filename.c_str(), NULL, 0, 0);
-  if(!iformat)
-  {
-    if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
-    if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
-    if(file) { file->Close(); delete file; }
-    return prev_duration;
-  }
+  while(isspace(duration[strlen(duration)-1]))
+    duration[strlen(duration)-1] = 0x00;
+  while(duration[strlen(duration)-1] == ',')
+    duration[strlen(duration)-1] = 0x00;
 
-  format_context->pb = iocontext;
-  result = m_dllAvFormat.avformat_open_input(&format_context, m_filename.c_str(), iformat, NULL);
-  if(result < 0)
-  {
-    if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
-    if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
-    if(file) { file->Close(); delete file; }
-    return prev_duration;
-  }
+  part = strtok(duration, ":");
+  hour = atoi(part);
+  part = strtok(NULL, ":");
+  min = atoi(part);
+  part = strtok(NULL, ".");
+  sec = atoi(part);
+  part = strtok(NULL, ".");
+  hund = atoi(part);
 
-  result = m_dllAvFormat.avformat_find_stream_info(format_context, NULL);
-  if(result < 0)
-  {
-    if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
-    if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
-    if(file) { file->Close(); delete file; }
-    return prev_duration;
-  }
-
-  int current_duration = format_context->duration;
-
-  if(format_context) m_dllAvFormat.avformat_close_input(&format_context);
-  if(iocontext) { m_dllAvUtil.av_free(iocontext->buffer); m_dllAvUtil.av_free(iocontext); }
-  if(file) { file->Close(); delete file; }
-
-  printf("GetStreamLength prev=%d, current=%d\n", prev_duration, (int)(current_duration / (AV_TIME_BASE / 1000)));
-  return (int)(current_duration / (AV_TIME_BASE / 1000));
+  return (hour * 60 * 60 * 1000) +
+    (min * 60 * 1000) +
+	 (sec * 1000) +
+	 (hund * 10);
 }
 
 double OMXReader::NormalizeFrameduration(double frameduration)
