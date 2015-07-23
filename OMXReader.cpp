@@ -1139,52 +1139,10 @@ void OMXReader::SetSpeed(int iSpeed)
 
 int OMXReader::GetStreamLength()
 {
-  FILE *fp;
-  char cmd[1024];
-  char duration[128];
-  char *part;
-  int64_t hour, min, sec, hund;
-
   if (!m_pFormatContext)
     return 0;
 
-<<<<<<< HEAD
   return (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
-=======
-  //gets 00:10:53.68,
-  sprintf(cmd, "avconv -i '%s' 2>&1 | grep Duration | awk '{ print $2 }'", 
-    m_filename.c_str());
-
-  fp = popen(cmd, "r");
-  if(fp == NULL)
-  {
-    printf("Failed to run command\n");
-	 //if command fails then return the duration we got from the original file processing
-	 return (int)(m_pFormatContext->duration / (AV_TIME_BASE / 1000));
-  }
-
-  fgets(duration, sizeof(duration)-1, fp);
-  pclose(fp);
-
-  while(isspace(duration[strlen(duration)-1]))
-    duration[strlen(duration)-1] = 0x00;
-  while(duration[strlen(duration)-1] == ',')
-    duration[strlen(duration)-1] = 0x00;
-
-  part = strtok(duration, ":");
-  hour = atoi(part);
-  part = strtok(NULL, ":");
-  min = atoi(part);
-  part = strtok(NULL, ".");
-  sec = atoi(part);
-  part = strtok(NULL, ".");
-  hund = atoi(part);
-
-  return (hour * 60 * 60 * 1000) +
-    (min * 60 * 1000) +
-	 (sec * 1000) +
-	 (hund * 10);
->>>>>>> 089de952904355034fa4144d63a2db604d12ee14
 }
 
 double OMXReader::NormalizeFrameduration(double frameduration)
