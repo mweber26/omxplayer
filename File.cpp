@@ -21,6 +21,8 @@
 #include "linux/PlatformDefs.h"
 #include <iostream>
 #include <stdio.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include "utils/StdString.h"
 
 #include "File.h"
@@ -35,9 +37,26 @@ using namespace std;
 #pragma warning (disable:4244)
 #endif
 
+unsigned int SDL_GetTicks(void)
+{
+  static struct timespec start_ts;
+  static int is_init;
+  struct timespec now;
+
+  if(!is_init) clock_gettime(CLOCK_MONOTONIC_RAW, &start_ts);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+  return (now.tv_sec - start_ts.tv_sec) * 1000 + (now.tv_nsec - start_ts.tv_nsec) / 1000000;
+}
+
+void mylogger(const char *fmt, ...)
+{
+}
+
 //*********************************************************************************************
 CFile::CFile()
 {
+  mylogger("%d - CFile::CFile\n", SDL_GetTicks());
   m_pFile = NULL;
   m_flags = 0;
   m_bPipe = false;
@@ -46,6 +65,7 @@ CFile::CFile()
 //*********************************************************************************************
 CFile::~CFile()
 {
+  mylogger("%d - CFile::~CFile\n", SDL_GetTicks());
   if(m_pFile && !m_bPipe)
     fclose(m_pFile);
 }
@@ -53,6 +73,7 @@ CFile::~CFile()
 //*********************************************************************************************
 bool CFile::Open(const CStdString& strFileName, unsigned int flags)
 {
+  mylogger("%d - CFile::Open(%s)\n", SDL_GetTicks(), strFileName.c_str());
   m_flags = flags;
   m_fileName = strFileName;
 
@@ -96,6 +117,7 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
   unsigned int i;
   unsigned int ret = 0;
   int64_t offset = 0;
+  int64_t existingFileLength = 0;
 
   if(!m_pFile)
     return 0;
@@ -103,19 +125,29 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
   //get where the fread should always start
   offset = ftello64(m_pFile);
 
+  mylogger("%d - CFile::Read(%lld, %lld)\n", SDL_GetTicks(), offset, uiBufSize);
   for(i = 0; i < 100; i++)
   {
     ret = fread(lpBuf, 1, uiBufSize, m_pFile);
     //if we don't get what they want, try to reopen the file and try again
     if(ret < uiBufSize)
     {
+      mylogger("  %d - retry\n", SDL_GetTicks());
+      if(existingFileLength == 0)
+        existingFileLength = GetLength();
+
       usleep(100000); //100ms
       fclose(m_pFile);
       m_pFile = fopen64(m_fileName.c_str(), "r");
       fseeko64(m_pFile, offset, SEEK_SET);
+
+      //if we already got the length after 1 retry, and the file still
+      //  hasn't changed length, then it's probably an existing recording
+      if(existingFileLength > 0 && GetLength() == existingFileLength)
+        break;
     }
-	 else
-	 	break;
+    else
+      break;
   }
 
   return ret;
@@ -124,6 +156,7 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
 //*********************************************************************************************
 void CFile::Close()
 {
+  mylogger("%d - File::Close()\n", SDL_GetTicks());
   if(m_pFile && !m_bPipe)
     fclose(m_pFile);
   m_pFile = NULL;
@@ -132,6 +165,7 @@ void CFile::Close()
 //*********************************************************************************************
 int64_t CFile::Seek(int64_t iFilePosition, int iWhence)
 {
+  mylogger("%d - File::Seek(%lld)\n", SDL_GetTicks(), iFilePosition);
   if (!m_pFile)
     return -1;
 
@@ -157,12 +191,14 @@ int64_t CFile::GetLength()
   //move back to the original offset
   fseeko64(m_pFile, offset, SEEK_SET);
 
+  mylogger("%d - File::GetLength() = %lld\n", SDL_GetTicks(), ret);
   return ret;
 }
 
 //*********************************************************************************************
 int64_t CFile::GetPosition()
 {
+  mylogger("%d - File::GetPosition()\n", SDL_GetTicks());
   if (!m_pFile)
     return -1;
 
@@ -194,6 +230,8 @@ int CFile::IoControl(EIoControl request, void* param)
 
 bool CFile::IsEOF()
 {
+  mylogger("%d - File::IsEOF()\n", SDL_GetTicks());
+
   if (!m_pFile)
     return -1;
 
