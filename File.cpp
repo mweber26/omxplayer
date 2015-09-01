@@ -143,7 +143,7 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
         existingFileLength = GetLength();
 
       fclose(m_pFile);
-      usleep(100000); //100ms
+      usleep(500000); //500ms
       m_pFile = fopen64(m_fileName.c_str(), "r");
       fseeko64(m_pFile, offset, SEEK_SET);
     }
