@@ -133,18 +133,19 @@ unsigned int CFile::Read(void *lpBuf, int64_t uiBufSize)
     if(ret < uiBufSize)
     {
       mylogger("  %d - retry\n", SDL_GetTicks());
-      if(existingFileLength == 0)
-        existingFileLength = GetLength();
-
-      usleep(100000); //100ms
-      fclose(m_pFile);
-      m_pFile = fopen64(m_fileName.c_str(), "r");
-      fseeko64(m_pFile, offset, SEEK_SET);
 
       //if we already got the length after 1 retry, and the file still
       //  hasn't changed length, then it's probably an existing recording
       if(existingFileLength > 0 && GetLength() == existingFileLength)
         break;
+
+      if(existingFileLength == 0)
+        existingFileLength = GetLength();
+
+      fclose(m_pFile);
+      usleep(100000); //100ms
+      m_pFile = fopen64(m_fileName.c_str(), "r");
+      fseeko64(m_pFile, offset, SEEK_SET);
     }
     else
       break;
